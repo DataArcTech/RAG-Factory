@@ -1,0 +1,26 @@
+site_name: RAG-Factory 文档
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.indexes
+    - toc.integrate
+    - content.tabs
+    - content.code.annotate
+
+repo_name: your-repo/rag-factory
+repo_url: https://github.com/your-repo/rag-factory
+
+nav:
+  - 首页: index.md
+  - 快速入门: docs/quickstart.md
+  - 配置指南: docs/configuration.md
+  - API参考: docs/api_reference.md
+  - 部署指南: docs/deployment.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.tabbed
+  - pymdownx.tasklist

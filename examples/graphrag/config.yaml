@@ -1,0 +1,33 @@
+# RAG-Factory 配置文件 (适配2wikimultihopqa数据集)
+dataset:
+ dataset_name: 2wikimultihopqa
+ n_samples: 100
+
+llm:
+  type: OpenAILike
+  base_url: "http://localhost:9997/v1"
+  api_key: "not used actually"
+  model: "qwen2.5-instruct"
+
+embedding:
+  type: OpenAILikeEmbedding
+  base_url: "http://localhost:9997/v1"
+  api_key: "not used actually"
+  model: "jina-embeddings-v3"
+  dimension: 1024
+
+graph_store:
+  type: Neo4jPropertyGraphStore
+  uri: "bolt://localhost:7687"
+  username: "neo4j"
+  password: "neo4j"
+  database: "neo4j"
+
+rag:
+  chunk_size: 1024
+  chunk_overlap: 20
+  max_paths_per_chunk: 2
+  num_workers: 4
+  similarity_top_k: 10
+  max_cluster_size: 5
+  stages: ["create", "inference", "evaluation"]

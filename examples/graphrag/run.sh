@@ -1,0 +1,1 @@
+python main.py --dataset 2wikimultihopqa --n 10 --create --benchmark

@@ -1,0 +1,12 @@
+future>=1.0.0
+openai
+tiktoken
+networkx
+graspologic
+nano-vectordb
+hnswlib
+xxhash
+tenacity
+dspy-ai
+neo4j
+aioboto3

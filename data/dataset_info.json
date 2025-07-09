@@ -1,0 +1,14 @@
+{
+    "test_samples":{
+        "dataset_path": "./test_samples"
+    },
+    "2wikimultihopqa": {
+        "dataset_path": "./2wikimultihopqa"
+    },
+    "hotpotqa": {
+        "dataset_path": "./hotpotqa"
+    },
+    "musique": {
+        "dataset_path": "./musique"
+    }
+}

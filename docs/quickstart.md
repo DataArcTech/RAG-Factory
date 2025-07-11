@@ -3,8 +3,8 @@
 ## 安装
 
 ```bash
-git clone https://github.com/your-repo/rag-factory.git
-cd rag-factory
+git clone https://github.com/DataArcTech/RAG-Factory.git
+cd RAG-Factory
 pip install -e .
 ```
 

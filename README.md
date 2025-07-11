@@ -11,7 +11,7 @@
   <a href="https://arxiv.org/abs/2411.06272" target="_blank" style="margin: 2px;">
     <img alt="arXiv" src="https://img.shields.io/badge/Arxiv-2411.06272-b31b1b.svg?logo=arXiv" style="display: inline-block; vertical-align: middle;"/>
   </a>
-  <a href="https://github.com/IDEA-FinAI/Golden-Touchstone" target="_blank" style="margin: 2px;">
+  <a href="https://github.com/DataArcTech/Golden-Touchstone" target="_blank" style="margin: 2px;">
     <img alt="github" src="https://img.shields.io/github/stars/DataArcTech/RAG-Factory.svg?style=social" style="display: inline-block; vertical-align: middle;"/>
   </a>
   <a href="https://huggingface.co/IDEA-FinAI/TouchstoneGPT-7B-Instruct" target="_blank" style="margin: 2px;">
@@ -54,7 +54,7 @@ See the `examples/` directory for sample configurations and usage.
 
 ## ⭐ Star History
 
-<a href="https://star-history.com/#HKUDS/LightRAG&Date">
+<a href="https://star-history.com/#DataArcTech/RAG-Factory&Date">
  <picture>
    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=DataArcTech/RAG-Factory&type=Date&theme=dark" />
    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=DataArcTech/RAG-Factory&type=Date" />
@@ -72,7 +72,7 @@ See the `examples/` directory for sample configurations and usage.
 </div>
 
 <div align="center">
-  <a href="https://github.com/HKUDS/LightRAG/graphs/contributors">
+  <a href="https://github.com/DataArcTech/RAG-Factory/graphs/contributors">
     <img src="https://contrib.rocks/image?repo=DataArcTech/RAG-Factory" style="border-radius: 15px; box-shadow: 0 0 20px rgba(0, 217, 255, 0.3);" />
   </a>
 </div> -->

@@ -20,7 +20,7 @@ from rag_factory.embeddings import OpenAICompatibleEmbedding
 from rag_factory.documents import kg_triples_parse_fn
 from rag_factory.prompts import KG_TRIPLET_EXTRACT_TMPL
 
-from rag_factory.graph_constructor import GraphRAGExtractor
+from rag_factory.graph_constructor import GraphRAGConstructor
 from rag_factory.storages.graph_storages import GraphRAGStore
 
 @dataclass
@@ -46,23 +46,22 @@ def initialize_components(config):
     embedding = OpenAICompatibleEmbedding(
         base_url=config['embedding']['base_url'],
         api_key=config['embedding']['api_key'],
-        model=config['embedding']['model']
+        model_name=config['embedding']['model']
     )
     Settings.embed_model = embedding
     
     # 初始化图存储
     graph_store = GraphRAGStore(
-        uri=config['graph_store']['uri'],
+        url=config['graph_store']['url'],
         username=config['graph_store']['username'],
-        password=config['graph_store']['password'],
-        database=config['graph_store']['database']
+        password=config['graph_store']['password']
     )
     
     return llm, embedding, graph_store
 
 def load_dataset(dataset_name: str, subset: int = 0) -> Any:
     """加载数据集"""
-    with open(f"./data/{dataset_name}.json", "r") as f:
+    with open(f"./data/{dataset_name}/samples.json", "r") as f:
         dataset = json.load(f)
     return dataset[:subset] if subset else dataset
 
@@ -87,6 +86,25 @@ def get_queries(dataset: Any) -> List[Query]:
         for datapoint in dataset
     ]
 
+# Global CACHED_REPONSES
+global CACHED_REPONSES
+global CACHED_REPONSES_PATH
+CACHED_REPONSES = {}
+def load_cached_responses(cache_file: str) -> None:
+    """加载缓存的LLM响应"""
+    if not os.path.exists(cache_file):
+        # 创建缓存文件
+        os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+        with open(cache_file, "w") as f:
+            f.write("")
+        print(f"缓存文件 {cache_file} 不存在，已创建空文件。")
+        return
+    with open(cache_file, "r") as f:
+        for line in f:
+            response = json.loads(line.strip())
+            CACHED_REPONSES[response["text"]] = response["response"]
+    print(f"加载缓存的LLM响应: {len(CACHED_REPONSES)} 条记录")
+
 if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description="RAG-Factory CLI")
@@ -103,8 +121,12 @@ if __name__ == "__main__":
     dataset_name = config['dataset']['dataset_name']
     n_samples = config['dataset'].get('n_samples', 0)
     dataset = load_dataset(dataset_name, n_samples)
-    corpus = get_corpus(dataset, args.dataset)
+    corpus = get_corpus(dataset, dataset_name)
     documents = [Document(text=f"{title}: {text}") for _, (title, text) in corpus.items()]
+
+    # 加载缓存的LLM响应
+    CACHED_REPONSES_PATH=f"results/{dataset_name}/llm_response_cache.jsonl"
+    load_cached_responses(cache_file=CACHED_REPONSES_PATH)
     
     splitter = SentenceSplitter(
         chunk_size=config['rag']['chunk_size'],
@@ -120,7 +142,7 @@ if __name__ == "__main__":
         print("创建知识图谱...")
 
         # 创建知识提取器
-        kg_extractor = GraphRAGExtractor(
+        kg_extractor = GraphRAGConstructor(
             llm=llm,
             extract_prompt=KG_TRIPLET_EXTRACT_TMPL,
             max_paths_per_chunk=config['rag']['max_paths_per_chunk'],

@@ -26,19 +26,8 @@ from llama_index.core.graph_stores.types import (
     Relation,
 )
 
-# open llm cached response
-CACHED_REPONSES = {}
-with open(".cache/llm_response_cache.jsonl", "r") as f:
-    cached_responses = f.readlines()
-
-for line in cached_responses:
-    try:
-        cached_response = json.loads(line.strip())
-        CACHED_REPONSES[cached_response["text"]] = cached_response["response"]
-    except json.JSONDecodeError:
-        continue
-print(f"Loaded {len(CACHED_REPONSES)} cached responses from .cache/llm_response_cache.jsonl")
-
+global CACHED_REPONSES
+CACHED_REPONSES: Dict[str, Dict[str, str]] = {}
 
 class GraphRAGConstructor(TransformComponent):
     """Extract triples from a graph.

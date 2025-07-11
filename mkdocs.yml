@@ -8,8 +8,8 @@ theme:
     - content.tabs
     - content.code.annotate
 
-repo_name: your-repo/rag-factory
-repo_url: https://github.com/your-repo/rag-factory
+repo_name: DataArcTech/RAG-Factory
+repo_url: https://github.com/DataArcTech/RAG-Factory
 
 nav:
   - 首页: index.md

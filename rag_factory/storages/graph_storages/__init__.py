@@ -1,3 +1,4 @@
-from .neo4j import Neo4jPropertyGraphStore
+# -*- coding: utf-8 -*-
+from .graphrag_store import GraphRAGStore
 
-__all__ = ['Neo4jPropertyGraphStore']
+__all__ = ['GraphRAGStore']

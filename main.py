@@ -14,9 +14,14 @@ from tqdm import tqdm
 from llama_index.core import Settings, Document
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core import PropertyGraphIndex
-from rag_factory.llms import OpenAILike
-from rag_factory.embeddings import OpenAILikeEmbedding
-from rag_factory.storages.graph_storages import Neo4jPropertyGraphStore
+from rag_factory.llms import OpenAICompatible
+from rag_factory.embeddings import OpenAICompatibleEmbedding
+
+from rag_factory.documents import kg_triples_parse_fn
+from rag_factory.prompts import KG_TRIPLET_EXTRACT_TMPL
+
+from rag_factory.graph_constructor import GraphRAGExtractor
+from rag_factory.storages.graph_storages import GraphRAGStore
 
 @dataclass
 class Query:
@@ -30,7 +35,7 @@ def load_config(config_path):
 
 def initialize_components(config):
     # 初始化LLM
-    llm = OpenAILike(
+    llm = OpenAICompatible(
         base_url=config['llm']['base_url'],
         api_key=config['llm']['api_key'],
         model=config['llm']['model']
@@ -38,7 +43,7 @@ def initialize_components(config):
     Settings.llm = llm
     
     # 初始化Embedding模型
-    embedding = OpenAILikeEmbedding(
+    embedding = OpenAICompatibleEmbedding(
         base_url=config['embedding']['base_url'],
         api_key=config['embedding']['api_key'],
         model=config['embedding']['model']
@@ -46,7 +51,7 @@ def initialize_components(config):
     Settings.embed_model = embedding
     
     # 初始化图存储
-    graph_store = Neo4jPropertyGraphStore(
+    graph_store = GraphRAGStore(
         uri=config['graph_store']['uri'],
         username=config['graph_store']['username'],
         password=config['graph_store']['password'],
@@ -83,7 +88,6 @@ def get_queries(dataset: Any) -> List[Query]:
     ]
 
 if __name__ == "__main__":
-    load_dotenv()
     
     parser = argparse.ArgumentParser(description="RAG-Factory CLI")
     parser.add_argument("-c", "--config", default="examples/graphrag/config.yaml", help="配置文件路径")
@@ -92,6 +96,8 @@ if __name__ == "__main__":
     # 加载配置
     config = load_config(args.config)
     print("加载配置文件:", args.config)
+    # 加载基础组件
+    llm, embedding, graph_store = initialize_components(config)
 
     print("加载数据集...")
     dataset_name = config['dataset']['dataset_name']
@@ -112,46 +118,13 @@ if __name__ == "__main__":
 
     if args.create:
         print("创建知识图谱...")
-        from llama_index.core import PropertyGraphIndex
-        from llama_index.core.llms import ChatMessage
-        
-        # 定义知识提取模板
-        KG_TRIPLET_EXTRACT_TMPL = '''\"\"\"
-        -Goal-
-        Given a text document, identify all entities and their entity types from the text and all relationships among the identified entities.
-        Given the text, extract up to {max_knowledge_triplets} entity-relation triplets.
-        ... [保留原有模板内容] ...
-        \"\"\"
-        '''
-
-        def parse_fn(response_str: str) -> Any:
-            json_pattern = r"\{.*\}"
-            match = re.search(json_pattern, response_str, re.DOTALL)
-            entities = []
-            relationships = []
-            if not match:
-                return entities, relationships
-            try:
-                data = json.loads(match.group(0))
-                entities = [
-                    (entity["entity_name"], entity["entity_type"], entity["entity_description"])
-                    for entity in data.get("entities", [])
-                ]
-                relationships = [
-                    (rel["source_entity"], rel["target_entity"], rel["relation"], rel["relationship_description"])
-                    for rel in data.get("relationships", [])
-                ]
-                return entities, relationships
-            except (json.JSONDecodeError, KeyError) as e:
-                print(f"Error parsing JSON: {e}")
-                return entities, relationships
 
         # 创建知识提取器
         kg_extractor = GraphRAGExtractor(
             llm=llm,
             extract_prompt=KG_TRIPLET_EXTRACT_TMPL,
             max_paths_per_chunk=config['rag']['max_paths_per_chunk'],
-            parse_fn=parse_fn,
+            parse_fn=kg_triples_parse_fn,
             num_workers=config['rag']['num_workers']
         )
 

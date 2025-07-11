@@ -1,3 +1,3 @@
-from .openai_like import OpenAILikeEmbedding
+from .openai_compatible import OpenAICompatibleEmbedding
 
-__all__ = ['OpenAILikeEmbedding']
+__all__ = ['OpenAICompatibleEmbedding']

@@ -1,7 +1,7 @@
 # RAG-Factory 配置文件 (适配2wikimultihopqa数据集)
 dataset:
- dataset_name: 2wikimultihopqa
- n_samples: 100
+ dataset_name: test_samples
+ n_samples: 10
 
 llm:
   type: OpenAILike

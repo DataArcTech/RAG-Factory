@@ -1,1 +1,4 @@
-python main.py --dataset 2wikimultihopqa --n 10 --create --benchmark
+
+
+
+python main.py --config examples/graphrag/config.yaml

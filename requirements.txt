@@ -10,3 +10,5 @@ tenacity
 dspy-ai
 neo4j
 aioboto3
+llama-index
+llama-index-core

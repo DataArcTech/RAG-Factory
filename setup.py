@@ -22,11 +22,6 @@ setup(
     packages=find_packages(),
     install_requires=get_requirements(),
     python_requires=">=3.8",
-    entry_points={
-        "console_scripts": [
-            "rag-factory=RAG-Factory.main:main",
-        ],
-    },
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Developers",

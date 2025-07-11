@@ -17,11 +17,9 @@ embedding:
   dimension: 1024
 
 graph_store:
-  type: Neo4jPropertyGraphStore
-  uri: "bolt://localhost:7687"
+  url: "bolt://localhost:7687"
   username: "neo4j"
-  password: "neo4j"
-  database: "neo4j"
+  password: "4rfvXSW@"
 
 rag:
   chunk_size: 1024

@@ -208,3 +208,6 @@ __marimo__/
 
 # DS_Store
 .DS_Store
+
+# results/
+results/

@@ -1,3 +1,3 @@
-from .openai_like import OpenAILike
+from .openai_Compatible import OpenAICompatible
 
-__all__ = ['OpenAILike']
+__all__ = ['OpenAICompatible']

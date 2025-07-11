@@ -1,4 +1,46 @@
-class GraphRAGExtractor(TransformComponent):
+import argparse
+import asyncio
+import json
+import os
+import re
+from dataclasses import dataclass, field
+
+from llama_index.core.schema import TransformComponent, BaseNode
+from llama_index.core.llms.llm import LLM
+from llama_index.core.prompts import PromptTemplate
+from llama_index.core.prompts.default_prompts import (
+    DEFAULT_KG_TRIPLET_EXTRACT_PROMPT,
+)
+
+from typing import Any, List, Callable, Optional, Union, Dict
+from IPython.display import Markdown, display
+
+from llama_index.core.async_utils import run_jobs
+from llama_index.core.indices.property_graph.utils import (
+    default_parse_triplets_fn,
+)
+from llama_index.core.graph_stores.types import (
+    EntityNode,
+    KG_NODES_KEY,
+    KG_RELATIONS_KEY,
+    Relation,
+)
+
+# open llm cached response
+CACHED_REPONSES = {}
+with open(".cache/llm_response_cache.jsonl", "r") as f:
+    cached_responses = f.readlines()
+
+for line in cached_responses:
+    try:
+        cached_response = json.loads(line.strip())
+        CACHED_REPONSES[cached_response["text"]] = cached_response["response"]
+    except json.JSONDecodeError:
+        continue
+print(f"Loaded {len(CACHED_REPONSES)} cached responses from .cache/llm_response_cache.jsonl")
+
+
+class GraphRAGConstructor(TransformComponent):
     """Extract triples from a graph.
 
     Uses an LLM and a simple prompt + output parsing to extract paths (i.e. triples) and entity, relation descriptions from text.

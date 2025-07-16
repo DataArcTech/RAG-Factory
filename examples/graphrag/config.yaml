@@ -5,13 +5,13 @@ dataset:
 
 llm:
   type: OpenAILike
-  base_url: "http://localhost:9997/v1"
+  base_url: "http://192.168.190.10:9997/v1"
   api_key: "not used actually"
   model: "qwen2.5-instruct"
 
 embedding:
   type: OpenAILikeEmbedding
-  base_url: "http://localhost:9997/v1"
+  base_url: "http://192.168.190.3:9997/v1"
   api_key: "not used actually"
   model: "jina-embeddings-v3"
   dimension: 1024

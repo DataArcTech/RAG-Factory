@@ -211,3 +211,7 @@ __marimo__/
 
 # results/
 results/
+
+# .env files
+.env
+.env.local

@@ -1,33 +1,23 @@
-import argparse
 import asyncio
 import json
-import os
-import re
-from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, List, Optional, Union
 
-from llama_index.core.schema import TransformComponent, BaseNode
+from llama_index.core.async_utils import run_jobs
+from llama_index.core.graph_stores.types import (
+    KG_NODES_KEY,
+    KG_RELATIONS_KEY,
+    EntityNode,
+    Relation,
+)
 from llama_index.core.llms.llm import LLM
 from llama_index.core.prompts import PromptTemplate
 from llama_index.core.prompts.default_prompts import (
     DEFAULT_KG_TRIPLET_EXTRACT_PROMPT,
 )
+from llama_index.core.schema import BaseNode, TransformComponent
 
-from typing import Any, List, Callable, Optional, Union, Dict
-from IPython.display import Markdown, display
+from rag_factory.caches.cache import LlmResponseCache
 
-from llama_index.core.async_utils import run_jobs
-from llama_index.core.indices.property_graph.utils import (
-    default_parse_triplets_fn,
-)
-from llama_index.core.graph_stores.types import (
-    EntityNode,
-    KG_NODES_KEY,
-    KG_RELATIONS_KEY,
-    Relation,
-)
-
-global CACHED_REPONSES
-CACHED_REPONSES: Dict[str, Dict[str, str]] = {}
 
 class GraphRAGConstructor(TransformComponent):
     """Extract triples from a graph.
@@ -52,14 +42,16 @@ class GraphRAGConstructor(TransformComponent):
     parse_fn: Callable
     num_workers: int
     max_paths_per_chunk: int
+    llm_response_cache: LlmResponseCache
 
     def __init__(
         self,
         llm: Optional[LLM] = None,
         extract_prompt: Optional[Union[str, PromptTemplate]] = None,
-        parse_fn: Callable = default_parse_triplets_fn,
+        parse_fn: Callable = lambda x: ([], []),
         max_paths_per_chunk: int = 10,
         num_workers: int = 4,
+        dataset_name: str = "graph_rag_store",
     ) -> None:
         """Init params."""
         from llama_index.core import Settings
@@ -73,6 +65,9 @@ class GraphRAGConstructor(TransformComponent):
             parse_fn=parse_fn,
             num_workers=num_workers,
             max_paths_per_chunk=max_paths_per_chunk,
+            llm_response_cache=LlmResponseCache(
+                llm_name=llm.model if llm else "default_llm",
+            )
         )
 
     @classmethod
@@ -83,9 +78,7 @@ class GraphRAGConstructor(TransformComponent):
         self, nodes: List[BaseNode], show_progress: bool = False, **kwargs: Any
     ) -> List[BaseNode]:
         """Extract triples from nodes."""
-        return asyncio.run(
-            self.acall(nodes, show_progress=show_progress, **kwargs)
-        )
+        return asyncio.run(self.acall(nodes, show_progress=show_progress, **kwargs))
 
     async def _aextract(self, node: BaseNode) -> BaseNode:
         """Extract triples from a node."""
@@ -93,22 +86,15 @@ class GraphRAGConstructor(TransformComponent):
 
         text = node.get_content(metadata_mode="llm")
         try:
-            if text in CACHED_REPONSES:
-                llm_response = CACHED_REPONSES[text]
-            else:
+            llm_response = self.llm_response_cache.get(text)
+            if not llm_response:
                 llm_response = await self.llm.apredict(
                     self.extract_prompt,
                     text=text,
                     max_knowledge_triplets=self.max_paths_per_chunk,
                 )
-                # cache the response
-                cached_llm_response = {
-                    "text": text,
-                    "response": llm_response,
-                    "model": self.llm.model,
-                }
-                with open(".cache/llm_response_cache.jsonl", "a+") as f:
-                    f.write(json.dumps(cached_llm_response) + "\n")
+                self.llm_response_cache.set(text, llm_response)
+
             entities, entities_relationship = self.parse_fn(llm_response)
         except ValueError:
             entities = []

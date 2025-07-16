@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+from pathlib import Path
 import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Tuple
@@ -16,6 +17,7 @@ from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core import PropertyGraphIndex
 from rag_factory.llms import OpenAICompatible
 from rag_factory.embeddings import OpenAICompatibleEmbedding
+from rag_factory.caches import init_db
 
 from rag_factory.documents import kg_triples_parse_fn
 from rag_factory.prompts import KG_TRIPLET_EXTRACT_TMPL
@@ -36,7 +38,7 @@ def load_config(config_path):
 def initialize_components(config):
     # 初始化LLM
     llm = OpenAICompatible(
-        base_url=config['llm']['base_url'],
+        api_base=config['llm']['base_url'],
         api_key=config['llm']['api_key'],
         model=config['llm']['model']
     )
@@ -44,7 +46,7 @@ def initialize_components(config):
     
     # 初始化Embedding模型
     embedding = OpenAICompatibleEmbedding(
-        base_url=config['embedding']['base_url'],
+        api_base=config['embedding']['base_url'],
         api_key=config['embedding']['api_key'],
         model_name=config['embedding']['model']
     )
@@ -52,6 +54,7 @@ def initialize_components(config):
     
     # 初始化图存储
     graph_store = GraphRAGStore(
+        llm=llm,
         url=config['graph_store']['url'],
         username=config['graph_store']['username'],
         password=config['graph_store']['password']
@@ -86,24 +89,6 @@ def get_queries(dataset: Any) -> List[Query]:
         for datapoint in dataset
     ]
 
-# Global CACHED_REPONSES
-global CACHED_REPONSES
-global CACHED_REPONSES_PATH
-CACHED_REPONSES = {}
-def load_cached_responses(cache_file: str) -> None:
-    """加载缓存的LLM响应"""
-    if not os.path.exists(cache_file):
-        # 创建缓存文件
-        os.makedirs(os.path.dirname(cache_file), exist_ok=True)
-        with open(cache_file, "w") as f:
-            f.write("")
-        print(f"缓存文件 {cache_file} 不存在，已创建空文件。")
-        return
-    with open(cache_file, "r") as f:
-        for line in f:
-            response = json.loads(line.strip())
-            CACHED_REPONSES[response["text"]] = response["response"]
-    print(f"加载缓存的LLM响应: {len(CACHED_REPONSES)} 条记录")
 
 if __name__ == "__main__":
     
@@ -117,6 +102,7 @@ if __name__ == "__main__":
     # 加载基础组件
     llm, embedding, graph_store = initialize_components(config)
 
+
     print("加载数据集...")
     dataset_name = config['dataset']['dataset_name']
     n_samples = config['dataset'].get('n_samples', 0)
@@ -124,9 +110,13 @@ if __name__ == "__main__":
     corpus = get_corpus(dataset, dataset_name)
     documents = [Document(text=f"{title}: {text}") for _, (title, text) in corpus.items()]
 
-    # 加载缓存的LLM响应
-    CACHED_REPONSES_PATH=f"results/{dataset_name}/llm_response_cache.jsonl"
-    load_cached_responses(cache_file=CACHED_REPONSES_PATH)
+    # 初始化数据库
+    cache_folder = os.path.join(".cache", config['dataset']['dataset_name'])
+    # convert to Path object
+    cache_folder = Path(cache_folder)
+    print(f"初始化缓存数据库: {cache_folder}")
+    init_db(cache_folder, remove_exists=False)
+
     
     splitter = SentenceSplitter(
         chunk_size=config['rag']['chunk_size'],
@@ -181,8 +171,8 @@ if __name__ == "__main__":
             })
         
         # 保存结果
-        os.makedirs("./results", exist_ok=True)
-        result_file = f"./results/{args.dataset}_{args.n}.json"
+        os.makedirs(f"./results/{dataset_name}", exist_ok=True)
+        result_file = f"./results/{dataset_name}/{dataset_name}_{n_samples}.json"
         with open(result_file, "w") as f:
             json.dump(results, f, indent=4)
     

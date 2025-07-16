@@ -1,0 +1,1 @@
+from llama_index.core import PropertyGraphIndex

@@ -141,3 +141,22 @@ class GraphRAGStore(Neo4jPropertyGraphStore):
         if not self.community_summary:
             self.build_communities()
         return self.community_summary
+    
+
+    def load_entity_info(self):
+        """Load entity information from the cache."""
+        if not self.entity_info:
+            self.entity_info = self.entity_info_cache.get_all()
+        return self.entity_info
+
+    def load_community_info(self):
+        """Load community information from the cache."""
+        if not self.community_info:
+            self.community_info = self.community_info_cache.get_all()
+        return self.community_info
+
+    def load_community_summaries(self):
+        """Load community summaries from the cache."""
+        if not self.community_summary:
+            self.community_summary = self.community_summary_cache.get_all()
+        return self.community_summary

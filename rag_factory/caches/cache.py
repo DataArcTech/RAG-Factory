@@ -149,6 +149,9 @@ class EntityInfoCache:
             entity_name=entity_name, entity_info=entity_info
         ).execute()
 
+    def get_all(self) -> dict[str, list[int]]:
+        return {entity["entity_name"]: json.loads(entity["entity_info"]) for entity in _EntityInfoCache.select().dicts()}
+
 class CommunityInfoCache:
     def get(self, community_id: str) -> str | None:
         result = _CommunityInfoCache.get_or_none(community_id=community_id)
@@ -158,6 +161,9 @@ class CommunityInfoCache:
         _CommunityInfoCache.replace(
             community_id=community_id, community_info=community_info
         ).execute()
+
+    def get_all(self) -> dict[str, list[str]]:
+        return {community["community_id"]: json.loads(community["community_info"]) for community in _CommunityInfoCache.select().dicts()}
 
 
 class CommunitySummaryCache:
@@ -169,6 +175,9 @@ class CommunitySummaryCache:
         _CommunitySummaryCache.replace(
             community_id=community_id, summary=summary
         ).execute()
+
+    def get_all(self) -> dict[str, str]:
+        return {community["community_id"]: community["summary"] for community in _CommunitySummaryCache.select().dicts()}
 
 
 def init_db(cache_folder: Path, remove_exists=False):

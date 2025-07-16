@@ -158,6 +158,12 @@ if __name__ == "__main__":
             property_graph_store=graph_store,
             embed_kg_nodes=True
         )
+
+        if not index.property_graph_store.community_summary or not index.property_graph_store.community_info or not index.property_graph_store.entity_info:
+            print(f"loading entity info, community info and summaries from cache")
+            index.property_graph_store.load_entity_info()
+            index.property_graph_store.load_community_info()
+            index.property_graph_store.load_community_summaries()
         
         queries = get_queries(dataset)
         results = []

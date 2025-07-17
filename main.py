@@ -15,6 +15,7 @@ from tqdm import tqdm
 from llama_index.core import Settings, Document
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core import PropertyGraphIndex
+from llama_index.core.llms import ChatMessage
 from rag_factory.llms import OpenAICompatible
 from rag_factory.embeddings import OpenAICompatibleEmbedding
 from rag_factory.caches import init_db
@@ -24,6 +25,7 @@ from rag_factory.prompts import KG_TRIPLET_EXTRACT_TMPL
 
 from rag_factory.graph_constructor import GraphRAGConstructor
 from rag_factory.storages.graph_storages import GraphRAGStore
+from rag_factory.retrivers.graphrag_query_engine import GraphRAGQueryEngine
 
 @dataclass
 class Query:
@@ -89,6 +91,20 @@ def get_queries(dataset: Any) -> List[Query]:
         for datapoint in dataset
     ]
 
+def _query_task(query_engine, query: Query, solution="naive_rag") -> Dict[str, Any]:
+        question = query.question
+        query_engine_response = query_engine.query(question)
+        retrived_docs = [node.text for node in query_engine_response.source_nodes]
+        answer = query_engine_response.response
+
+
+        return {
+            "question": query.question,
+            "answer": answer,
+            "evidence": retrived_docs,
+            "ground_truth": [e[0] for e in query.evidence],
+            "ground_truth_answer": query.answer,
+        }
 
 if __name__ == "__main__":
     
@@ -167,14 +183,22 @@ if __name__ == "__main__":
         
         queries = get_queries(dataset)
         results = []
+
+        if config['rag']['solution'] == "naive_rag":
+            query_engine = index.as_query_engine(
+                
+            )
+        elif config['rag']['solution'] == "graphrag":
+            query_engine = GraphRAGQueryEngine(
+                graph_store=index.property_graph_store,
+                llm=llm,
+                index=index,
+                similarity_top_k = config['rag']['similarity_top_k'],
+            )
         
         for query in tqdm(queries, desc="处理查询"):
-            response = index.as_query_engine().query(query.question)
-            results.append({
-                "question": query.question,
-                "answer": response.response,
-                "ground_truth": query.answer
-            })
+            response = _query_task(query_engine, query, solution=config['rag']['solution'])
+            results.append(response)
         
         # 保存结果
         os.makedirs(f"./results/{dataset_name}", exist_ok=True)

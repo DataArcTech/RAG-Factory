@@ -185,10 +185,8 @@ if __name__ == "__main__":
         results = []
 
         if config['rag']['solution'] == "naive_rag":
-            query_engine = index.as_query_engine(
-                
-            )
-        elif config['rag']['solution'] == "graphrag":
+            query_engine = index.as_query_engine()
+        elif config['rag']['solution'] == "graph_rag":
             query_engine = GraphRAGQueryEngine(
                 graph_store=index.property_graph_store,
                 llm=llm,
@@ -209,44 +207,16 @@ if __name__ == "__main__":
     if args.evaluation:
         print("评估结果...")
         # 计算评估指标
-        from llama_index.core.evaluation import (
-            CorrectnessEvaluator,
-            FaithfulnessEvaluator,
-            RelevancyEvaluator
-        )
+        if not results:
+            with open(result_file, "r") as f:
+                results = json.load(f)
+
+        answer_scores: List[float] = []
+        for result in results:
+            ground_truth_answer = result["ground_truth_answer"]
+            predicted_answer = result["answer"]
+
+            p_answer = 1 if ground_truth_answer in predicted_answer else 0
+            answer_scores.append(p_answer)
         
-        evaluators = [
-            CorrectnessEvaluator(llm=llm),
-            FaithfulnessEvaluator(llm=llm),
-            RelevancyEvaluator(llm=llm)
-        ]
-        
-        metrics = {}
-        for evaluator in evaluators:
-            eval_name = evaluator.__class__.__name__
-            metrics[eval_name] = []
-            for result in results:
-                eval_result = evaluator.evaluate(
-                    query=result["question"],
-                    response=result["answer"],
-                    reference=result["ground_truth"]
-                )
-                metrics[eval_name].append(eval_result.score)
-        
-        # 计算平均分
-        avg_metrics = {
-            name: sum(scores)/len(scores)
-            for name, scores in metrics.items()
-        }
-        
-        # 保存评估结果
-        with open(f"./results/{args.dataset}_{args.n}_metrics.json", "w") as f:
-            json.dump({
-                "detailed_metrics": metrics,
-                "average_metrics": avg_metrics
-            }, f, indent=4)
-        
-        print(f"基准测试完成，结果已保存到 {result_file}")
-        print("评估指标:")
-        for name, score in avg_metrics.items():
-            print(f"- {name}: {score:.2f}")
+        print(f"answer EM score:{np.mean(answer_scores)}")

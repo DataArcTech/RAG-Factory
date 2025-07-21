@@ -22,8 +22,9 @@ class GraphRAGStore(Neo4jPropertyGraphStore):
     community_info = {}
     max_cluster_size = 5
 
-    def __init__(self, llm, **kwargs):
+    def __init__(self, llm, max_cluster_size=5, **kwargs):
         super().__init__(**kwargs)
+        self.max_cluster_size = max_cluster_size
         self.llm = llm
         self.llm_response_cache = LlmResponseCache(llm_name=llm.model)
         self.entity_info_cache = EntityInfoCache()

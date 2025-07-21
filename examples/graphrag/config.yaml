@@ -2,6 +2,8 @@
 dataset:
  dataset_name: test_samples
  n_samples: 10
+ chunk_size: 1024 # 每个chunk包含的token数  
+ chunk_overlap: 20 # 每个chunk之间的重叠token数
 
 llm:
   type: OpenAILike
@@ -22,10 +24,11 @@ graph_store:
   password: "4rfvXSW@"
 
 rag:
-  chunk_size: 1024
-  chunk_overlap: 20
-  max_paths_per_chunk: 2
-  num_workers: 4
-  similarity_top_k: 10
-  max_cluster_size: 5
-  stages: ["create", "inference", "evaluation"]
+  solution: "graph_rag"
+  mode: "local"
+  num_workers: 4 # 并行处理chunk的worker数
+  similarity_top_k: 10 # 检索到的top_k个节点
+  stages: ["create", "inference","evaluation"]
+  graph_rag:
+   max_paths_per_chunk: 2 # 每个chunk的最大path数, 也就是每个chunk抽取的max_knowledge_triplets
+   max_cluster_size: 5 # 对graph进行聚类以获得commuities

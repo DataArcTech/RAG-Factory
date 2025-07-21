@@ -57,9 +57,10 @@ def initialize_components(config):
     # 初始化图存储
     graph_store = GraphRAGStore(
         llm=llm,
+        max_cluster_size=config['rag']["graph_rag"]['max_cluster_size'],
         url=config['graph_store']['url'],
         username=config['graph_store']['username'],
-        password=config['graph_store']['password']
+        password=config['graph_store']['password'],
     )
     
     return llm, embedding, graph_store
@@ -91,10 +92,11 @@ def get_queries(dataset: Any) -> List[Query]:
         for datapoint in dataset
     ]
 
-def _query_task(query_engine, query: Query, solution="naive_rag") -> Dict[str, Any]:
+def _query_task(retriever, query_engine, query: Query, solution="naive_rag") -> Dict[str, Any]:
         question = query.question
+        retrived_docs = [node.text for node in retriever.retrieve(question)]
         query_engine_response = query_engine.query(question)
-        retrived_docs = [node.text for node in query_engine_response.source_nodes]
+        # retrived_docs = [node.text for node in query_engine_response.source_nodes]
         answer = query_engine_response.response
 
 
@@ -135,8 +137,8 @@ if __name__ == "__main__":
 
     
     splitter = SentenceSplitter(
-        chunk_size=config['rag']['chunk_size'],
-        chunk_overlap=config['rag']['chunk_overlap']
+        chunk_size=config['dataset']['chunk_size'],
+        chunk_overlap=config['dataset']['chunk_overlap']
     )
     nodes = splitter.get_nodes_from_documents(documents)
 
@@ -184,18 +186,32 @@ if __name__ == "__main__":
         queries = get_queries(dataset)
         results = []
 
+        # retriver
+        retriever = index.as_retriever(
+            similarity_top_k=config['rag']['similarity_top_k'],
+        )
+        # query engine
         if config['rag']['solution'] == "naive_rag":
-            query_engine = index.as_query_engine()
+            # TODO
+            pass
         elif config['rag']['solution'] == "graph_rag":
-            query_engine = GraphRAGQueryEngine(
-                graph_store=index.property_graph_store,
-                llm=llm,
-                index=index,
-                similarity_top_k = config['rag']['similarity_top_k'],
-            )
+            if config['rag']['mode'] == "local":
+                query_engine = index.as_query_engine()
+            elif config['rag']['mode'] == "global":
+                query_engine = GraphRAGQueryEngine(
+                    graph_store=index.property_graph_store,
+                    llm=llm,
+                    index=index,
+                    similarity_top_k = config['rag']['similarity_top_k'],
+                )
+        elif config['rag']['solution'] == "multi_modal_rag":
+            # TODO: Implement Multi-modal RAG solution
+            raise NotImplementedError("Multi-modal RAG solution is not implemented yet.")
+        else:
+            raise ValueError(f"Unsupported RAG solution: {config['rag']['solution']}")
         
         for query in tqdm(queries, desc="处理查询"):
-            response = _query_task(query_engine, query, solution=config['rag']['solution'])
+            response = _query_task(retriever, query_engine, query, solution=config['rag']['solution'])
             results.append(response)
         
         # 保存结果

@@ -24,7 +24,6 @@ from rag_factory.documents import kg_triples_parse_fn
 from rag_factory.prompts import KG_TRIPLET_EXTRACT_TMPL
 
 from rag_factory.graph_constructor import GraphRAGConstructor
-from rag_factory.storages.graph_storages import GraphRAGStore
 from rag_factory.retrivers.graphrag_query_engine import GraphRAGQueryEngine
 
 @dataclass
@@ -54,16 +53,26 @@ def initialize_components(config):
     )
     Settings.embed_model = embedding
     
-    # 初始化图存储
-    graph_store = GraphRAGStore(
-        llm=llm,
-        max_cluster_size=config['rag']["graph_rag"]['max_cluster_size'],
-        url=config['graph_store']['url'],
-        username=config['graph_store']['username'],
-        password=config['graph_store']['password'],
-    )
+    if config["storage"]["type"] == "vector_store":
+        # 初始化向量存储
+        import qdrant_client
+        from rag_factory.storages.vector_storages import QdrantVectorStore
+        client = qdrant_client.QdrantClient(
+            url=config['storage']['url'],
+        )
+        store = QdrantVectorStore(client=client, collection_name=config["dataset"]['dataset_name'])
+    elif config["storage"]["type"] == "graph_store":
+        from rag_factory.storages.graph_storages import GraphRAGStore
+        # 初始化图存储
+        store = GraphRAGStore(
+            llm=llm,
+            max_cluster_size=config['rag']["graph_rag"]['max_cluster_size'],
+            url=config['storage']['url'],
+            username=config['storage']['username'],
+            password=config['storage']['password'],
+        )
     
-    return llm, embedding, graph_store
+    return llm, embedding, store
 
 def load_dataset(dataset_name: str, subset: int = 0) -> Any:
     """加载数据集"""
@@ -118,7 +127,7 @@ if __name__ == "__main__":
     config = load_config(args.config)
     print("加载配置文件:", args.config)
     # 加载基础组件
-    llm, embedding, graph_store = initialize_components(config)
+    llm, embedding, store = initialize_components(config)
 
 
     print("加载数据集...")
@@ -147,41 +156,58 @@ if __name__ == "__main__":
     args.evaluation = "evaluation" in config['rag']['stages']
 
     if args.create:
-        print("创建知识图谱...")
+        print("Create Index...")
+        if config['rag']['solution'] == "naive_rag":
+            from llama_index.core import StorageContext
+            from llama_index.core import VectorStoreIndex
 
-        # 创建知识提取器
-        kg_extractor = GraphRAGConstructor(
-            llm=llm,
-            extract_prompt=KG_TRIPLET_EXTRACT_TMPL,
-            max_paths_per_chunk=config['rag']['max_paths_per_chunk'],
-            parse_fn=kg_triples_parse_fn,
-            num_workers=config['rag']['num_workers']
-        )
+            storage_context = StorageContext.from_defaults(vector_store=store)
+            index = VectorStoreIndex.from_documents(
+                documents,
+                storage_context=storage_context,
+            )
+        elif config['rag']['solution'] == "graph_rag":
+            # 创建知识提取器
+            kg_extractor = GraphRAGConstructor(
+                llm=llm,
+                extract_prompt=KG_TRIPLET_EXTRACT_TMPL,
+                max_paths_per_chunk=config['rag']['max_paths_per_chunk'],
+                parse_fn=kg_triples_parse_fn,
+                num_workers=config['rag']['num_workers']
+            )
 
-        # 构建索引
-        index = PropertyGraphIndex(
-            nodes=nodes,
-            kg_extractors=[kg_extractor],
-            property_graph_store=graph_store,
-            show_progress=True
-        )
-        
-        # 构建社区
-        index.property_graph_store.build_communities()
-        print("知识图谱创建完成")
+            # 构建索引
+            index = PropertyGraphIndex(
+                nodes=nodes,
+                kg_extractors=[kg_extractor],
+                property_graph_store=store,
+                show_progress=True
+            )
+            
+            # 构建社区
+            index.property_graph_store.build_communities()
+            print("知识图谱创建完成")
 
     if args.inference:
         print("运行基准测试...")
-        index = PropertyGraphIndex.from_existing(
-            property_graph_store=graph_store,
-            embed_kg_nodes=True
-        )
-
-        if not index.property_graph_store.community_summary or not index.property_graph_store.community_info or not index.property_graph_store.entity_info:
-            print(f"loading entity info, community info and summaries from cache")
-            index.property_graph_store.load_entity_info()
-            index.property_graph_store.load_community_info()
-            index.property_graph_store.load_community_summaries()
+        if index is None:
+            if config['rag']['solution'] == "naive_rag":
+                index = VectorStoreIndex.from_vector_store(
+                    store,
+                    # Embedding model should match the original embedding model
+                    # embed_model=Settings.embed_model
+                )
+            elif config['rag']['solution'] == "graph_rag":
+                index = PropertyGraphIndex.from_existing(
+                    property_graph_store=store,
+                    embed_kg_nodes=True
+                )
+                # 加载社区信息
+                if not index.property_graph_store.community_summary or not index.property_graph_store.community_info or not index.property_graph_store.entity_info:
+                    print(f"loading entity info, community info and summaries from cache")
+                    index.property_graph_store.load_entity_info()
+                    index.property_graph_store.load_community_info()
+                    index.property_graph_store.load_community_summaries()
         
         queries = get_queries(dataset)
         results = []
@@ -192,8 +218,7 @@ if __name__ == "__main__":
         )
         # query engine
         if config['rag']['solution'] == "naive_rag":
-            # TODO
-            pass
+            query_engine = index.as_query_engine()
         elif config['rag']['solution'] == "graph_rag":
             if config['rag']['mode'] == "local":
                 query_engine = index.as_query_engine()

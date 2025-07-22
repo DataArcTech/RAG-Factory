@@ -19,17 +19,13 @@ embedding:
   dimension: 1024
 
 storage:
-  type: graph_store
-  url: "bolt://localhost:7687"
-  username: "neo4j"
-  password: "4rfvXSW@"
+  type: vector_store
+  url: "http://192.168.190.3:6333"
+
 
 rag:
-  solution: "graph_rag"
+  solution: "naive_rag"
   mode: "local"
   num_workers: 4 # 并行处理chunk的worker数
   similarity_top_k: 10 # 检索到的top_k个节点
   stages: ["create", "inference","evaluation"]
-  graph_rag:
-   max_paths_per_chunk: 2 # 每个chunk的最大path数, 也就是每个chunk抽取的max_knowledge_triplets
-   max_cluster_size: 5 # 对graph进行聚类以获得commuities

@@ -1,10 +1,19 @@
 import argparse
 import json
 import os
+import sys
 from pathlib import Path
 import re
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
+from omegaconf import OmegaConf
+from rag_factory.args import (
+    DatasetConfig,
+    LLMConfig,
+    EmbeddingConfig,
+    StorageConfig,
+    RAGConfig,
+    Query
+)
 
 import numpy as np
 import xxhash
@@ -26,50 +35,63 @@ from rag_factory.prompts import KG_TRIPLET_EXTRACT_TMPL
 from rag_factory.graph_constructor import GraphRAGConstructor
 from rag_factory.retrivers.graphrag_query_engine import GraphRAGQueryEngine
 
-@dataclass
-class Query:
-    question: str = field()
-    answer: str = field()
-    evidence: List[Tuple[str, int]] = field()
 
-def load_config(config_path):
-    with open(config_path, 'r') as f:
-        return yaml.safe_load(f)
+def read_args(config_path: Union[str, Path]) -> Tuple[DatasetConfig, LLMConfig, EmbeddingConfig, StorageConfig, RAGConfig]:
+    r"""Get arguments from the command line or a config file."""
+    config_path = Path(config_path)
+    if config_path.suffix in (".yaml", ".yml", ".json"):
+        override_config = OmegaConf.from_cli(sys.argv[2:])
+        dict_config = OmegaConf.load(config_path)
+        config_dict = OmegaConf.to_container(OmegaConf.merge(dict_config, override_config))
+        
+        return (
+            DatasetConfig(**config_dict.get("dataset", {})),
+            LLMConfig(**config_dict.get("llm", {})),
+            EmbeddingConfig(**config_dict.get("embedding", {})),
+            StorageConfig(**config_dict.get("storage", {})),
+            RAGConfig(**config_dict.get("rag", {}))
+        )
 
-def initialize_components(config):
+def initialize_components(
+    dataset_config: DatasetConfig,
+    llm_config: LLMConfig,
+    embedding_config: EmbeddingConfig,
+    storage_config: StorageConfig,
+    rag_config: RAGConfig
+):
     # 初始化LLM
     llm = OpenAICompatible(
-        api_base=config['llm']['base_url'],
-        api_key=config['llm']['api_key'],
-        model=config['llm']['model']
+        api_base=llm_config.base_url,
+        api_key=llm_config.api_key,
+        model=llm_config.model
     )
     Settings.llm = llm
     
     # 初始化Embedding模型
     embedding = OpenAICompatibleEmbedding(
-        api_base=config['embedding']['base_url'],
-        api_key=config['embedding']['api_key'],
-        model_name=config['embedding']['model']
+        api_base=embedding_config.base_url,
+        api_key=embedding_config.api_key,
+        model_name=embedding_config.model
     )
     Settings.embed_model = embedding
     
-    if config["storage"]["type"] == "vector_store":
+    if storage_config.type == "vector_store":
         # 初始化向量存储
         import qdrant_client
         from rag_factory.storages.vector_storages import QdrantVectorStore
         client = qdrant_client.QdrantClient(
-            url=config['storage']['url'],
+            url=storage_config.url,
         )
-        store = QdrantVectorStore(client=client, collection_name=config["dataset"]['dataset_name'])
-    elif config["storage"]["type"] == "graph_store":
+        store = QdrantVectorStore(client=client, collection_name=dataset_config.dataset_name)
+    elif storage_config.type == "graph_store":
         from rag_factory.storages.graph_storages import GraphRAGStore
         # 初始化图存储
         store = GraphRAGStore(
             llm=llm,
-            max_cluster_size=config['rag']["graph_rag"]['max_cluster_size'],
-            url=config['storage']['url'],
-            username=config['storage']['username'],
-            password=config['storage']['password'],
+            max_cluster_size=rag_config.max_cluster_size,
+            url=storage_config.url,
+            username=storage_config.username,
+            password=storage_config.password,
         )
     
     return llm, embedding, store
@@ -124,56 +146,73 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # 加载配置
-    config = load_config(args.config)
-    print("加载配置文件:", args.config)
+    dataset_config, llm_config, embedding_config, storage_config, rag_config = read_args(args.config)
+    print("Loading config file:", args.config)
     # 加载基础组件
-    llm, embedding, store = initialize_components(config)
+    llm, embedding, store = initialize_components(
+        dataset_config,
+        llm_config,
+        embedding_config,
+        storage_config,
+        rag_config
+    )
 
 
-    print("加载数据集...")
-    dataset_name = config['dataset']['dataset_name']
-    n_samples = config['dataset'].get('n_samples', 0)
+    print("Loading dataset...")
+    dataset_name = dataset_config.dataset_name
+    n_samples = dataset_config.n_samples
     dataset = load_dataset(dataset_name, n_samples)
     corpus = get_corpus(dataset, dataset_name)
     documents = [Document(text=f"{title}: {text}") for _, (title, text) in corpus.items()]
 
     # 初始化数据库
-    cache_folder = os.path.join(".cache", config['dataset']['dataset_name'])
+    cache_folder = os.path.join(".cache", dataset_name)
     # convert to Path object
     cache_folder = Path(cache_folder)
-    print(f"初始化缓存数据库: {cache_folder}")
+    print(f"Initializing database at {cache_folder}")
     init_db(cache_folder, remove_exists=False)
 
     
     splitter = SentenceSplitter(
-        chunk_size=config['dataset']['chunk_size'],
-        chunk_overlap=config['dataset']['chunk_overlap']
+        chunk_size=dataset_config.chunk_size,
+        chunk_overlap=dataset_config.chunk_overlap
     )
     nodes = splitter.get_nodes_from_documents(documents)
 
-    args.create = "create" in config['rag']['stages']
-    args.inference = "inference" in config['rag']['stages']
-    args.evaluation = "evaluation" in config['rag']['stages']
+    args.create = "create" in rag_config.stages
+    args.inference = "inference" in rag_config.stages
+    args.evaluation = "evaluation" in rag_config.stages
 
     if args.create:
         print("Create Index...")
-        if config['rag']['solution'] == "naive_rag":
+        if rag_config.solution == "naive_rag":
             from llama_index.core import StorageContext
             from llama_index.core import VectorStoreIndex
 
             storage_context = StorageContext.from_defaults(vector_store=store)
-            index = VectorStoreIndex.from_documents(
-                documents,
-                storage_context=storage_context,
-            )
-        elif config['rag']['solution'] == "graph_rag":
+            # if collection exists, no need to create index again
+            if store._collection_exists(collection_name=dataset_name):
+                print(f"Collection {dataset_name} already exists, skipping index creation.")
+                index = VectorStoreIndex.from_vector_store(
+                    store,
+                    storage_context=storage_context,
+                    embed_model=Settings.embed_model
+                )
+            else:
+                print(f"Creating collection {dataset_name}...")
+                # 创建向量索引
+                index = VectorStoreIndex.from_documents(
+                    documents,
+                    storage_context=storage_context,
+                )
+        elif rag_config.solution == "graph_rag":
             # 创建知识提取器
             kg_extractor = GraphRAGConstructor(
                 llm=llm,
                 extract_prompt=KG_TRIPLET_EXTRACT_TMPL,
-                max_paths_per_chunk=config['rag']['max_paths_per_chunk'],
+                max_paths_per_chunk=rag_config.max_paths_per_chunk,
                 parse_fn=kg_triples_parse_fn,
-                num_workers=config['rag']['num_workers']
+                num_workers=rag_config.num_workers
             )
 
             # 构建索引
@@ -186,18 +225,18 @@ if __name__ == "__main__":
             
             # 构建社区
             index.property_graph_store.build_communities()
-            print("知识图谱创建完成")
+            print("Knowledge graph construction completed.")
 
     if args.inference:
-        print("运行基准测试...")
+        print("Running benchmark...")
         if index is None:
-            if config['rag']['solution'] == "naive_rag":
+            if rag_config.solution == "naive_rag":
                 index = VectorStoreIndex.from_vector_store(
                     store,
                     # Embedding model should match the original embedding model
                     # embed_model=Settings.embed_model
                 )
-            elif config['rag']['solution'] == "graph_rag":
+            elif rag_config.solution == "graph_rag":
                 index = PropertyGraphIndex.from_existing(
                     property_graph_store=store,
                     embed_kg_nodes=True
@@ -214,40 +253,40 @@ if __name__ == "__main__":
 
         # retriver
         retriever = index.as_retriever(
-            similarity_top_k=config['rag']['similarity_top_k'],
+            similarity_top_k=rag_config.similarity_top_k,
         )
         # query engine
-        if config['rag']['solution'] == "naive_rag":
+        if rag_config.solution == "naive_rag":
             query_engine = index.as_query_engine()
-        elif config['rag']['solution'] == "graph_rag":
-            if config['rag']['mode'] == "local":
+        elif rag_config.solution == "graph_rag":
+            if rag_config.mode == "local":
                 query_engine = index.as_query_engine()
-            elif config['rag']['mode'] == "global":
+            elif rag_config.mode == "global":
                 query_engine = GraphRAGQueryEngine(
                     graph_store=index.property_graph_store,
                     llm=llm,
                     index=index,
-                    similarity_top_k = config['rag']['similarity_top_k'],
+                    similarity_top_k = rag_config.similarity_top_k,
                 )
-        elif config['rag']['solution'] == "multi_modal_rag":
+        elif rag_config.solution == "multi_modal_rag":
             # TODO: Implement Multi-modal RAG solution
             raise NotImplementedError("Multi-modal RAG solution is not implemented yet.")
         else:
-            raise ValueError(f"Unsupported RAG solution: {config['rag']['solution']}")
-        
-        for query in tqdm(queries, desc="处理查询"):
-            response = _query_task(retriever, query_engine, query, solution=config['rag']['solution'])
+            raise ValueError(f"Unsupported RAG solution: {rag_config.solution}")
+
+        for query in tqdm(queries, desc="Processing queries"):
+            response = _query_task(retriever, query_engine, query, solution=rag_config.solution)
             results.append(response)
-        
-        # 保存结果
-        os.makedirs(f"./results/{dataset_name}", exist_ok=True)
-        result_file = f"./results/{dataset_name}/{dataset_name}_{n_samples}.json"
+
+        # Save results
+        os.makedirs(f"./results/{dataset_name}/{rag_config.solution}", exist_ok=True)
+        result_file = f"./results/{dataset_name}/{rag_config.solution}/{dataset_name}_{n_samples}.json"
         with open(result_file, "w") as f:
             json.dump(results, f, indent=4)
     
     if args.evaluation:
-        print("评估结果...")
-        # 计算评估指标
+        print("Evaluating results...")
+        # Compute evaluation metrics
         if not results:
             with open(result_file, "r") as f:
                 results = json.load(f)

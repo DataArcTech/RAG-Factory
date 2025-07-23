@@ -22,7 +22,6 @@
   </a>
 </div>
 
-
 A factory for building advanced RAG (Retrieval-Augmented Generation) pipelines, including:
 
 - Standard RAG implementations
@@ -30,6 +29,10 @@ A factory for building advanced RAG (Retrieval-Augmented Generation) pipelines, 
 - Multi-modal RAG systems
 
 ## Features
+
+<div>
+  <img src="./assets/knowledge_base_screenshot.png" alt="Example Knowledge Base Screenshot of RAG-Factory" width="800">
+</div>
 
 - Modular design for easy customization
 - Support for various knowledge graph backends
@@ -51,6 +54,21 @@ python main.py --config examples/graphrag/config.yaml
 ## Examples
 
 See the `examples/` directory for sample configurations and usage.
+
+## Roadmap
+
+### ✅ Implemented Features
+- Vector RAG (基于Qdrant实现)
+- Graph RAG (支持知识图检索)
+- Lightweight SQLite Cache (轻量级缓存方案)
+
+### 🚧 Planned Features
+- Multi-modal RAG (多模态检索增强生成)
+- ReAct QueryEngine (交互式查询引擎)
+- Query Engineering:
+  - Query Rewriting (查询重写)
+  - Sub-Questions (子问题分解)
+- Agentic RAG (智能工具选择优化性能)
 
 ## ⭐ Star History
 

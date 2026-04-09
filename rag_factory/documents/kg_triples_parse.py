@@ -5,6 +5,7 @@ from typing import Any, List, Tuple
 
 def kg_triples_parse_fn(response_str: str) -> Any:
     json_pattern = r"\{.*\}"
+    # print("LLM Response:", response_str)
     match = re.search(json_pattern, response_str, re.DOTALL)
     entities = []
     relationships = []

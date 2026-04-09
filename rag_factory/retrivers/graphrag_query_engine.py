@@ -32,12 +32,19 @@ class GraphRAGQueryEngine(CustomQueryEngine):
         community_ids = self.retrieve_entity_communities(
             self.graph_store.entity_info, entities
         )
+        community_ids = [str(cid) for cid in community_ids]
         community_summaries = self.graph_store.get_community_summaries()
-        community_answers = [
-            self.generate_answer_from_summary(community_summary, query_str)
-            for id, community_summary in community_summaries.items()
-            if id in community_ids
-        ]
+        # community_answers = [
+        #     self.generate_answer_from_summary(community_summary, query_str)
+        #     for id, community_summary in community_summaries.items()
+        #     if id in community_ids
+        # ]
+        community_answers = []
+        for idx, community_summary in community_summaries.items():
+            if idx in community_ids:
+                answer = self.generate_answer_from_summary(community_summary, query_str)
+                community_answers.append(answer)
+                # print(f"Community ID: {idx}, Answer: {answer}")
 
         final_answer = self.aggregate_answers(community_answers)
         return final_answer

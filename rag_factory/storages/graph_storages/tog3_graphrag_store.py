@@ -15,6 +15,7 @@ from rag_factory.caches.cache import (
     CommunitySummaryCache,
 )
 
+
 from llama_index.core.graph_stores.types import (
     PropertyGraphStore,
     Triplet,
@@ -30,6 +31,7 @@ CHUNK_SIZE = 1000
 BASE_ENTITY_LABEL = "__Entity__"
 BASE_NODE_LABEL = "__Node__"
 BASE_COMMUNITY_LABEL = "__Community__"
+
 
 class CommunityNode(LabelledNode):
     """A community in a graph."""
@@ -55,7 +57,7 @@ class CommunityNode(LabelledNode):
         return str(hash(self.text)) if self.id_ is None else self.id_
 
 
-class GraphRAGStore(Neo4jPropertyGraphStore):
+class TOG3GraphRAGStore(Neo4jPropertyGraphStore):
     community_summary = {}
     entity_info = None
     community_info = {}
@@ -70,13 +72,111 @@ class GraphRAGStore(Neo4jPropertyGraphStore):
         self.community_info_cache = CommunityInfoCache()
         self.community_summary_cache = CommunitySummaryCache()
 
+    def upsert_nodes(self, nodes: List[LabelledNode]) -> None:
+        # Lists to hold separated types
+        entity_dicts: List[dict] = []
+        chunk_dicts: List[dict] = []
+        community_dicts: List[dict] = []
+
+        # Sort by type
+        for item in nodes:
+            if isinstance(item, EntityNode):
+                entity_dicts.append({**item.dict(), "id": item.id})
+            elif isinstance(item, ChunkNode):
+                chunk_dicts.append({**item.dict(), "id": item.id})
+            elif isinstance(item, CommunityNode):
+                community_dicts.append({**item.dict(), "id": item.id})
+            else:
+                # Log that we do not support these types of nodes
+                # Or raise an error?
+                pass
+
+        if chunk_dicts:
+            for index in range(0, len(chunk_dicts), CHUNK_SIZE):
+                chunked_params = chunk_dicts[index : index + CHUNK_SIZE]
+                self.structured_query(
+                    f"""
+                    UNWIND $data AS row
+                    MERGE (c:{BASE_NODE_LABEL} {{id: row.id}})
+                    SET c.text = row.text, c:Chunk
+                    WITH c, row
+                    SET c += row.properties
+                    WITH c, row.embedding AS embedding
+                    WHERE embedding IS NOT NULL
+                    CALL db.create.setNodeVectorProperty(c, 'embedding', embedding)
+                    RETURN count(*)
+                    """,
+                    param_map={"data": chunked_params},
+                )
+
+        if community_dicts:
+            for index in range(0, len(community_dicts), CHUNK_SIZE):
+                chunked_params = community_dicts[index : index + CHUNK_SIZE]
+                self.structured_query(
+                    f"""
+                    UNWIND $data AS row
+                    MERGE (c:{BASE_NODE_LABEL} {{id: row.id}})
+                    SET c.name = row.name, c.text = row.text, c:{BASE_COMMUNITY_LABEL}
+                    SET c += row.properties
+                    WITH c, row.embedding AS embedding
+                    WHERE embedding IS NOT NULL
+                    CALL db.create.setNodeVectorProperty(c, 'embedding', embedding)
+                    RETURN count(*)
+                    """,
+                    param_map={"data": chunked_params},
+                )
+
+
+        if entity_dicts:
+            for index in range(0, len(entity_dicts), CHUNK_SIZE):
+                chunked_params = entity_dicts[index : index + CHUNK_SIZE]
+                self.structured_query(
+                    f"""
+                    UNWIND $data AS row
+                    MERGE (e:{BASE_NODE_LABEL} {{id: row.id}})
+                    SET e += apoc.map.clean(row.properties, [], [])
+                    SET e.name = row.name, e:`{BASE_ENTITY_LABEL}`
+                    WITH e, row
+                    CALL apoc.create.addLabels(e, [row.label])
+                    YIELD node
+                    WITH e, row
+                    CALL (e, row) {{
+                        WITH e, row
+                        WHERE row.embedding IS NOT NULL
+                        CALL db.create.setNodeVectorProperty(e, 'embedding', row.embedding)
+                        RETURN count(*) AS count
+                    }}
+                    WITH e, row WHERE row.properties.triplet_source_id IS NOT NULL
+                    MERGE (c:{BASE_NODE_LABEL} {{id: row.properties.triplet_source_id}})
+                    MERGE (e)<-[:MENTIONS]-(c)
+                    """,
+                    param_map={"data": chunked_params},
+                )
+
+    def upsert_relations(self, relations: List[Relation]) -> None:
+        """Add relations."""
+        params = [r.dict() for r in relations]
+        for index in range(0, len(params), CHUNK_SIZE):
+            chunked_params = params[index : index + CHUNK_SIZE]
+
+            self.structured_query(
+                f"""
+                UNWIND $data AS row
+                MERGE (source: {BASE_NODE_LABEL} {{id: row.source_id}})
+                ON CREATE SET source:Chunk
+                MERGE (target: {BASE_NODE_LABEL} {{id: row.target_id}})
+                ON CREATE SET target:Chunk
+                WITH source, target, row
+                CALL apoc.merge.relationship(source, row.label, {{}}, row.properties, target) YIELD rel
+                RETURN count(*)
+                """,
+                param_map={"data": chunked_params},
+            )
+
+
+
     def generate_community_summary(self, text):
         """Generate summary for a given text using an LLM."""
-
-        # cut off text if too long to 30000
-        if len(text) > 30000:
-            text = text[:30000]
-
         cached_summary = self.llm_response_cache.get(text)
         if cached_summary:
             return cached_summary
@@ -131,10 +231,7 @@ class GraphRAGStore(Neo4jPropertyGraphStore):
         # Store summaries in cache
         if self.community_summary:
             for community_id, summary in self.community_summary.items():
-                try:
-                    self.community_summary_cache.set(community_id, summary)
-                except Exception as e:
-                    print(f"Error storing community summary: {e}")
+                self.community_summary_cache.set(community_id, summary)
 
 
     def _create_nx_graph(self):
@@ -201,7 +298,6 @@ class GraphRAGStore(Neo4jPropertyGraphStore):
         """Load community information from the cache."""
         if not self.community_info:
             self.community_info = self.community_info_cache.get_all()
-        print(f"Loaded {len(self.community_info)} communities from cache.")
         return self.community_info
 
     def load_community_summaries(self):
@@ -209,85 +305,3 @@ class GraphRAGStore(Neo4jPropertyGraphStore):
         if not self.community_summary:
             self.community_summary = self.community_summary_cache.get_all()
         return self.community_summary
-    
-    def upsert_nodes(self, nodes: List[LabelledNode]) -> None:
-        # Lists to hold separated types
-        entity_dicts: List[dict] = []
-        chunk_dicts: List[dict] = []
-        community_dicts: List[dict] = []
-
-        # Sort by type
-        for item in nodes:
-            if isinstance(item, EntityNode):
-                entity_dicts.append({**item.dict(), "id": item.id})
-            elif isinstance(item, ChunkNode):
-                chunk_dicts.append({**item.dict(), "id": item.id})
-            elif isinstance(item, CommunityNode):
-                community_dicts.append({**item.dict(), "id": item.id})
-            else:
-                # Log that we do not support these types of nodes
-                # Or raise an error?
-                pass
-
-        if chunk_dicts:
-            for index in range(0, len(chunk_dicts), CHUNK_SIZE):
-                chunked_params = chunk_dicts[index : index + CHUNK_SIZE]
-                self.structured_query(
-                    f"""
-                    UNWIND $data AS row
-                    MERGE (c:{BASE_NODE_LABEL} {{id: row.id}})
-                    SET c.text = row.text, c:Chunk
-                    WITH c, row
-                    SET c += row.properties
-                    WITH c, row.embedding AS embedding
-                    WHERE embedding IS NOT NULL
-                    CALL db.create.setNodeVectorProperty(c, 'embedding', embedding)
-                    RETURN count(*)
-                    """,
-                    param_map={"data": chunked_params},
-                )
-
-        if community_dicts:
-            print(f"Inserting {len(community_dicts)} community nodes...")
-            for index in range(0, len(community_dicts), CHUNK_SIZE):
-                chunked_params = community_dicts[index : index + CHUNK_SIZE]
-                self.structured_query(
-                    f"""
-                    UNWIND $data AS row
-                    MERGE (c:{BASE_NODE_LABEL} {{id: row.id}})
-                    SET c.name = row.name, c.text = row.text, c:`{BASE_COMMUNITY_LABEL}`
-                    SET c += row.properties
-                    WITH c, row.embedding AS embedding
-                    WHERE embedding IS NOT NULL
-                    CALL db.create.setNodeVectorProperty(c, 'embedding', embedding)
-                    RETURN count(*)
-                    """,
-                    param_map={"data": chunked_params},
-                )
-
-
-        if entity_dicts:
-            for index in range(0, len(entity_dicts), CHUNK_SIZE):
-                chunked_params = entity_dicts[index : index + CHUNK_SIZE]
-                self.structured_query(
-                    f"""
-                    UNWIND $data AS row
-                    MERGE (e:{BASE_NODE_LABEL} {{id: row.id}})
-                    SET e += apoc.map.clean(row.properties, [], [])
-                    SET e.name = row.name, e:`{BASE_ENTITY_LABEL}`
-                    WITH e, row
-                    CALL apoc.create.addLabels(e, [row.label])
-                    YIELD node
-                    WITH e, row
-                    CALL (e, row) {{
-                        WITH e, row
-                        WHERE row.embedding IS NOT NULL
-                        CALL db.create.setNodeVectorProperty(e, 'embedding', row.embedding)
-                        RETURN count(*) AS count
-                    }}
-                    WITH e, row WHERE row.properties.triplet_source_id IS NOT NULL
-                    MERGE (c:{BASE_NODE_LABEL} {{id: row.properties.triplet_source_id}})
-                    MERGE (e)<-[:MENTIONS]-(c)
-                    """,
-                    param_map={"data": chunked_params},
-                )

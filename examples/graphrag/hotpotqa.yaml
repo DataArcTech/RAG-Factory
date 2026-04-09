@@ -1,7 +1,7 @@
 # RAG-Factory 配置文件 (适配2wikimultihopqa数据集)
 dataset:
- dataset_name: test_samples
- n_samples: 10
+ dataset_name: hotpotqa
+ n_samples: 100
  chunk_size: 1024 # 每个chunk包含的token数  
  chunk_overlap: 20 # 每个chunk之间的重叠token数
 
@@ -13,7 +13,7 @@ llm:
 
 embedding:
   type: OpenAICompatibleEmbedding
-  base_url: "http://192.168.190.10:9997/v1"
+  base_url: "http://192.168.190.3:9997/v1"
   api_key: "not used actually"
   model: "jina-embeddings-v3"
   dimension: 1024
@@ -21,12 +21,12 @@ embedding:
 reranker:
   type: XinferenceRerank
   model: "jina-reranker-v2"
-  base_url: "http://192.168.190.10:9997/v1"
+  base_url: "http://192.168.190.3:9997/v1"
   top_n: 3
 
 storage:
   type: graph_store
-  url: "bolt://localhost:7687"
+  url: "bolt://localhost:7689"
   username: "neo4j"
   password: "4rfvXSW@"
 
@@ -36,8 +36,7 @@ rag:
   use_ReAct: False
   use_rerank: True
   use_multi_step: True
-  insert_community_nodes: True
-  num_workers: 4 # 并行处理chunk的worker数
+  num_workers: 16 # 并行处理chunk的worker数
   similarity_top_k: 10 # 检索到的top_k个节点
   stages: ["inference","evaluation"]
   # graph_rag参数

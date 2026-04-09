@@ -31,7 +31,7 @@ storage:
   password: "4rfvXSW@"
 
 rag:
-  solution: "graph_rag"
+  solution: "ToG3"
   mode: "local"
   use_ReAct: False
   use_rerank: True

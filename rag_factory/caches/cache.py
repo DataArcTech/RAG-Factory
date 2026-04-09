@@ -7,6 +7,7 @@ from peewee import (
     Model,
     SqliteDatabase,
     TextField,
+    BlobField,
     SQL,
 )
 
@@ -36,10 +37,15 @@ class _TranslationCache(_BaseCache):
 
 
 class _LlmResponseCache(_BaseCache):
+    # 定义缓存ID字段，自动增长
     id = AutoField()
+    # 定义大模型名称字段，最大长度为50个字符
     llm_name = CharField(max_length=50)
+    # 定义大模型参数字段，使用TextField存储可能较长的参数文本
     llm_params = TextField()
+    # 定义提示词字段，使用TextField存储可能较长的提示文本
     prompt = TextField()
+    # 定义响应字段，使用TextField存储可能较长的响应文本
     response = TextField()
 
     class Meta:
@@ -192,9 +198,17 @@ def init_db(cache_folder: Path, remove_exists=False):
             "busy_timeout": 1000,
         },
     )
-    db.create_tables(
-        [_TranslationCache, _LlmResponseCache, _EntityInfoCache, _CommunityInfoCache, _CommunitySummaryCache],
-        safe=True,
+    # 获取底层的 SQLite 连接并加载 sqlite-vec 扩展  
+    with db.connection_context():  
+        conn = db.connection()  
+        conn.enable_load_extension(True)  
+        sqlite_vec.load(conn)  
+        conn.enable_load_extension(False)   
+      
+    db.create_tables(  
+        [_TranslationCache, _LlmResponseCache, _EntityInfoCache,   
+         _CommunityInfoCache, _CommunitySummaryCache, _EmbeddingCache],  
+        safe=True,  
     )
 
 
@@ -249,3 +263,62 @@ def clean_test_db(test_db):
 # In multi-threaded scenarios, ensure this is called only once at startup.
 # default_cache_folder = Path.home() / ".cache" / "rag_factory"
 # init_db(default_cache_folder)
+
+
+import sqlite_vec  
+from sqlite_vec import serialize_float32  
+  
+class _EmbeddingCache(_BaseCache):  
+    id = AutoField()  
+    embed_model_name = CharField(max_length=50)  
+    embed_model_params = TextField()  
+    content_hash = CharField(max_length=64, index=True)  # 内容的哈希值  
+    content_text = TextField()  # 原始文本内容  
+    embedding_blob = BlobField()  # 序列化的 embedding  
+      
+    class Meta:  
+        constraints = [  
+            SQL("UNIQUE (embed_model_name, embed_model_params, content_hash) ON CONFLICT REPLACE"),  
+        ]
+
+import hashlib  
+  
+class EmbeddingCache:  
+    def __init__(self, embed_model_name: str, embed_model_params: dict = None):  
+        self.embed_model_name = embed_model_name  
+        self.replace_params(embed_model_params)  
+      
+    def replace_params(self, params: dict = None):  
+        if params is None:  
+            params = {}  
+        self.params = params  
+        params = _sort_dict_recursively(params)  
+        self.embed_model_params = json.dumps(params)  
+      
+    def _get_content_hash(self, content: str) -> str:  
+        return hashlib.sha256(content.encode('utf-8')).hexdigest()  
+      
+    def get(self, content: str) -> list[float] | None:  
+        content_hash = self._get_content_hash(content)  
+        result = _EmbeddingCache.get_or_none(  
+            embed_model_name=self.embed_model_name,  
+            embed_model_params=self.embed_model_params,  
+            content_hash=content_hash,  
+        )  
+        if result:  
+            # 反序列化 embedding  
+            import struct  
+            embedding_size = len(result.embedding_blob) // 4  
+            return list(struct.unpack(f'{embedding_size}f', result.embedding_blob))  
+        return None  
+      
+    def set(self, content: str, embedding: list[float]):  
+        content_hash = self._get_content_hash(content)  
+        embedding_blob = serialize_float32(embedding)  
+        _EmbeddingCache.create(  
+            embed_model_name=self.embed_model_name,  
+            embed_model_params=self.embed_model_params,  
+            content_hash=content_hash,  
+            content_text=content,  
+            embedding_blob=embedding_blob,  
+        )

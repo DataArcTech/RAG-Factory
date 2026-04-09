@@ -63,7 +63,7 @@ class OpenAICompatibleEmbedding(OpenAIEmbedding):
         api_base: Optional[str] = None,
         api_version: Optional[str] = None,
         max_retries: int = 10,
-        timeout: float = 60.0,
+        timeout: float = 120.0,
         reuse_client: bool = True,
         callback_manager: Optional[CallbackManager] = None,
         default_headers: Optional[Dict[str, str]] = None,

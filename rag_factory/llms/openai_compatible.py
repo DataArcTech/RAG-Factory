@@ -146,6 +146,13 @@ class OpenAICompatible(OpenAI):
         """Complete the prompt."""
         if not formatted:
             prompt = self.completion_to_prompt(prompt)
+            if len(prompt) > self.context_window - 2000:
+                print(
+                    f"Warning: prompt length {len(prompt)} exceeds context window {self.context_window - 2000}. Cut off."
+                )
+                # 只保留最后 context_window - 2000 个字符
+                preserved_part = len(prompt) - (self.context_window - 2000)
+                prompt = prompt[preserved_part:]
 
         return super().complete(prompt, **kwargs)
 
@@ -155,6 +162,12 @@ class OpenAICompatible(OpenAI):
         """Stream complete the prompt."""
         if not formatted:
             prompt = self.completion_to_prompt(prompt)
+            if len(prompt) > self.context_window - 2000:
+                print(
+                    f"Warning: prompt length {len(prompt)} exceeds context window {self.context_window - 2000}. Cut off."
+                )
+                preserved_part = len(prompt) - (self.context_window - 2000)
+                prompt = prompt[preserved_part:]
 
         return super().stream_complete(prompt, **kwargs)
 

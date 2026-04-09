@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import sys
+import asyncio
 from pathlib import Path
 import re
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -10,6 +11,7 @@ from rag_factory.args import (
     DatasetConfig,
     LLMConfig,
     EmbeddingConfig,
+    RerankerConfig,
     StorageConfig,
     RAGConfig,
     Query
@@ -27,12 +29,25 @@ from llama_index.core import Settings, Document
 from llama_index.core.schema import ImageDocument
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core import StorageContext
-from llama_index.core import PropertyGraphIndex
+from llama_index.core import VectorStoreIndex, PropertyGraphIndex
 from llama_index.core.indices import MultiModalVectorStoreIndex
 from llama_index.core.llms import ChatMessage
+from llama_index.core.schema import NodeWithScore, QueryBundle, TextNode
+
+# For ReActAgent
+from llama_index.core.tools import QueryEngineTool
+from llama_index.core.agent.workflow import ReActAgent
+from llama_index.core.agent import ReActChatFormatter
+from llama_index.core.agent.react.output_parser import ReActOutputParser
+from llama_index.core.workflow import Context
+from llama_index.core.agent.workflow import ToolCallResult, AgentStream
+
 from rag_factory.llms import OpenAICompatible
+from llama_index.llms.openai import OpenAI
+from llama_index.llms.openrouter import OpenRouter
 from rag_factory.embeddings import OpenAICompatibleEmbedding
 from rag_factory.caches import init_db
+from rag_factory.indexer.graph_indexer import CachedPropertyGraphIndex
 
 from rag_factory.documents import kg_triples_parse_fn
 from rag_factory.prompts import KG_TRIPLET_EXTRACT_TMPL, MULTIMODAL_QA_TMPL
@@ -40,8 +55,11 @@ from rag_factory.prompts import KG_TRIPLET_EXTRACT_TMPL, MULTIMODAL_QA_TMPL
 from rag_factory.graph_constructor import GraphRAGConstructor
 from rag_factory.retrivers.graphrag_query_engine import GraphRAGQueryEngine
 
+from rag_factory.rerankers import XinferenceRerank
 
-def read_args(config_path: Union[str, Path]) -> Tuple[DatasetConfig, LLMConfig, EmbeddingConfig, StorageConfig, RAGConfig]:
+
+
+def read_args(config_path: Union[str, Path]) -> Tuple[DatasetConfig, LLMConfig, EmbeddingConfig, RerankerConfig, StorageConfig, RAGConfig]:
     r"""Get arguments from the command line or a config file."""
     config_path = Path(config_path)
     if config_path.suffix in (".yaml", ".yml", ".json"):
@@ -53,6 +71,7 @@ def read_args(config_path: Union[str, Path]) -> Tuple[DatasetConfig, LLMConfig, 
             DatasetConfig(**config_dict.get("dataset", {})),
             LLMConfig(**config_dict.get("llm", {})),
             EmbeddingConfig(**config_dict.get("embedding", {})),
+            RerankerConfig(**config_dict.get("reranker", {})),
             StorageConfig(**config_dict.get("storage", {})),
             RAGConfig(**config_dict.get("rag", {}))
         )
@@ -61,6 +80,7 @@ def initialize_components(
     dataset_config: DatasetConfig,
     llm_config: LLMConfig,
     embedding_config: EmbeddingConfig,
+    reranker_config: RerankerConfig,
     storage_config: StorageConfig,
     rag_config: RAGConfig
 ):  
@@ -75,11 +95,23 @@ def initialize_components(
                 model=llm_config.model,
             )
     else:
-        llm = OpenAICompatible(
-            api_base=llm_config.base_url,
-            api_key=llm_config.api_key,
-            model=llm_config.model
-        )
+        # llm = OpenAICompatible(
+        #     api_base=llm_config.base_url,
+        #     api_key=llm_config.api_key,
+        #     model=llm_config.model,
+        #     # max_tokens=512
+        # )
+        model = "gpt-3.5-turbo"
+        # model = "gpt-oss-20b"
+        # model = "gpt-5-nano"
+        # model = "gpt-4o-mini"
+        
+        llm = OpenAI(temperature=0, model=model, api_base=os.getenv("OPENAI_API_URL"), api_key=os.getenv("OPENAI_API_KEY"))
+        # model = "qwen/qwen3-30b-a3b-instruct-2507"
+        # model = "google/gemini-2.5-pro-exp-03-25"
+        # model = "google/gemini-2.0-flash-exp:free"
+        # llm = OpenRouter(temperature=0, model=model, api_key=os.getenv("OPENROUTER_API_KEY"))
+
 
     Settings.llm = llm
     
@@ -90,6 +122,13 @@ def initialize_components(
         model_name=embedding_config.model
     )
     Settings.embed_model = embedding
+
+    reranker = XinferenceRerank(
+        base_url=reranker_config.base_url,
+        model=reranker_config.model,
+        top_n=reranker_config.top_n,
+    )
+
 
     text_store, graph_store, image_store = None, None, None
     
@@ -110,6 +149,7 @@ def initialize_components(
             url=storage_config.url,
             username=storage_config.username,
             password=storage_config.password,
+            refresh_schema=storage_config.refresh_schema
         )
     elif storage_config.type == "mm_store":
         # import qdrant_client
@@ -147,7 +187,7 @@ def initialize_components(
         "image_store": image_store,
     }
 
-    return llm, embedding, stores
+    return llm, embedding, stores, reranker
 
 def load_dataset(dataset_name: str, subset: int = 0) -> Any:
     """加载数据集"""
@@ -196,12 +236,74 @@ def get_queries(dataset: Any) -> List[Query]:
         for datapoint in dataset
     ]
 
+async def get_handler(agent, question: str, ctx: Context) -> Any:
+    """获取处理器"""
+    # handler = agent.run(question)
+    # for ev in handler.stream_events():
+    #     # if isinstance(ev, ToolCallResult): # response.tool_calls
+    #     #     print(f"\nCall {ev.tool_name} with {ev.tool_kwargs}\nReturned: {ev.tool_output}")
+    #     if isinstance(ev, AgentStream):
+    #         print(f"{ev.delta}", end="", flush=True)
+    question = question.query_str if isinstance(question, QueryBundle) else question
+    response = await agent.run(question)
+    for tool_call in response.tool_calls:
+        # tool_calls.tool_output.raw_output.source_nodes
+        print(f"\nCall {tool_call.tool_name} with {tool_call.tool_kwargs}\nReturned: {tool_call.tool_output}")
+    return response.response
 
-def _query_task(retriever, query_engine, query: Query, solution="naive_rag") -> Dict[str, Any]:
-        question = query.question
-        retrived_docs = [node.text for node in retriever.retrieve(question)]
-        query_engine_response = query_engine.query(question)
-        # retrived_docs = [node.text for node in query_engine_response.source_nodes]
+
+def _query_task(retriever, query_engine, query: Query, solution="naive_rag", use_ReAct=False) -> Dict[str, Any]:
+        
+        use_short_answer = False
+        if dataset_config.dataset_name in ["hotpotqa", "2wikimultihopqa", "musique"] and use_short_answer:
+            question = QueryBundle(
+                query_str=query.question
+                + " Give a short answer (as few words as possible). Don't explain or note anything, just answer, the answer is less than 10 words.",
+                custom_embedding_strs=[query.question],
+            )
+        else:
+            question = query.question
+        # retrived_docs = [node.text for node in retriever.retrieve(question)]
+
+        if use_ReAct:
+            # tool1 = FunctionTool.from_defaults(fn=execute_sql)
+            query_engine_tools = [
+                QueryEngineTool.from_defaults(
+                    query_engine=query_engine,
+                    name="rag_tool",
+                    description=(
+                        "Provides information about retrieval augmented generation task. "
+                        "Use a detailed plain text question as input to the tool."
+
+                    ),
+                )
+            ]
+            output_parser = ReActOutputParser()
+            agent = ReActAgent(
+                tools=query_engine_tools,
+                # llm=OpenAI(model="gpt-4o-mini"),
+                # system_prompt="if can not answer the question, use the tool to retrieve information or subgraph refinement.",
+            )
+            # context to hold this session/state
+            ctx = Context(agent)
+            query_engine_response = asyncio.run(get_handler(agent, question, ctx))
+            # query_engine_response = query_engine.chat(question)
+            answer = query_engine_response.content
+
+
+        else:
+            query_engine_response = query_engine.query(question)
+            if rag_config.use_multi_step:
+                sub_qa = query_engine_response.metadata["sub_qa"]
+            answer = query_engine_response.response
+
+        if not use_ReAct:
+            retrived_docs = [node.text for node in query_engine_response.source_nodes]
+        else:
+            retrived_docs = [node.text for node in retriever.retrieve(question)]
+        # print(f"length of retrived docs: {len(retrived_docs)}")
+        ## Print the response retrived source nodes and their scores
+        # print(query_engine_response.source_nodes[0].text, query_engine_response.source_nodes[0].score)
         # display_query_and_multimodal_response(question, query_engine_response)
         if solution == "mm_rag":
             image_nodes = query_engine_response.metadata["image_nodes"] or []
@@ -210,7 +312,7 @@ def _query_task(retriever, query_engine, query: Query, solution="naive_rag") -> 
             retrived_images = [scored_img_node.node.image_path for scored_img_node in image_nodes]
             retrived_docs.extend(retrived_images)
 
-        answer = query_engine_response.response
+       
 
 
         return {
@@ -221,27 +323,29 @@ def _query_task(retriever, query_engine, query: Query, solution="naive_rag") -> 
             "ground_truth_answer": query.answer.lower(),
         }
 
+
 if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description="RAG-Factory CLI")
     parser.add_argument("-c", "--config", default="examples/graphrag/config.yaml", help="配置文件路径")
     args = parser.parse_args()
 
-    # 加载配置
-    dataset_config, llm_config, embedding_config, storage_config, rag_config = read_args(args.config)
-    print("Loading config file:", args.config)
-    # 加载基础组件
-    llm, embedding, stores = initialize_components(
-        dataset_config,
-        llm_config,
-        embedding_config,
-        storage_config,
-        rag_config
-    )
-
     # 从.env文件中加载环境变量
     load_dotenv()
 
+    # 加载配置
+    dataset_config, llm_config, embedding_config, reranker_config, storage_config, rag_config = read_args(args.config)
+    print("Loading config file:", args.config)
+    # 加载基础组件
+    llm, embedding, stores, reranker = initialize_components(
+        dataset_config,
+        llm_config,
+        embedding_config,
+        reranker_config,
+        storage_config,
+        rag_config
+    )
+    text_store, graph_store, image_store = stores["text_store"], stores["graph_store"], stores["image_store"]
 
     print("Loading dataset...")
     dataset_name = dataset_config.dataset_name
@@ -264,6 +368,10 @@ if __name__ == "__main__":
     )
     nodes = splitter.get_nodes_from_documents(documents)
 
+    print(f"length of dataset: {len(dataset)}")
+    print(f"length of documents: {len(documents)}")
+    print(f"length of nodes: {len(nodes)}")
+
     if rag_config.solution == "mm_rag":
         # 获取图片数据
         all_images = get_images(dataset, dataset_name)
@@ -277,10 +385,11 @@ if __name__ == "__main__":
     args.inference = "inference" in rag_config.stages
     args.evaluation = "evaluation" in rag_config.stages
 
+    index = None
+    results = None
     if args.create:
         print("Create Index...")
         if rag_config.solution == "naive_rag":
-            from llama_index.core import VectorStoreIndex
 
             text_store = stores["text_store"]
             storage_context = StorageContext.from_defaults(vector_store=text_store)
@@ -311,11 +420,12 @@ if __name__ == "__main__":
 
             # 构建索引
             graph_store = stores["graph_store"]
-            index = PropertyGraphIndex(
+            index = CachedPropertyGraphIndex(
                 nodes=nodes,
                 kg_extractors=[kg_extractor],
                 property_graph_store=graph_store,
-                show_progress=True
+                show_progress=True,
+                embed_model_name=embedding_config.model,
             )
             
             # 构建社区
@@ -356,7 +466,7 @@ if __name__ == "__main__":
                     # embed_model=Settings.embed_model
                 )
             elif rag_config.solution == "graph_rag":
-                index = PropertyGraphIndex.from_existing(
+                index = CachedPropertyGraphIndex.from_existing(
                     property_graph_store=graph_store,
                     embed_kg_nodes=True
                 )
@@ -397,9 +507,30 @@ if __name__ == "__main__":
             )
         elif rag_config.solution == "graph_rag":
             if rag_config.mode == "local":
-                query_engine = index.as_query_engine(
-                    similarity_top_k=rag_config.similarity_top_k,
+                if rag_config.use_rerank:
+                    query_engine = index.as_query_engine(
+                        similarity_top_k=rag_config.similarity_top_k,
+                        node_postprocessors=[reranker]
+                    )
+                else:
+                    query_engine = index.as_query_engine(
+                        similarity_top_k=rag_config.similarity_top_k,
+                    )
+            if rag_config.use_multi_step:
+                from llama_index.core.indices.query.query_transform.base import (
+                    StepDecomposeQueryTransform,
                 )
+                from llama_index.core.query_engine import MultiStepQueryEngine
+                index_summary = f"Used to answer questions about the {dataset_name} dataset."
+                step_decompose_transform = StepDecomposeQueryTransform(llm=Settings.llm, verbose=True)
+                query_engine = MultiStepQueryEngine(
+                    query_engine=query_engine,
+                    query_transform=step_decompose_transform,
+                    index_summary=index_summary,
+                )
+                
+                # if rag_config.use_ReAct:
+                #     query_engine = index.as_chat_engine(chat_mode="react", verbose=True)
             elif rag_config.mode == "global":
                 query_engine = GraphRAGQueryEngine(
                     graph_store=index.property_graph_store,
@@ -419,7 +550,7 @@ if __name__ == "__main__":
             raise ValueError(f"Unsupported RAG solution: {rag_config.solution}")
 
         for query in tqdm(queries, desc="Processing queries"):
-            response = _query_task(retriever, query_engine, query, solution=rag_config.solution)
+            response = _query_task(retriever, query_engine, query, solution=rag_config.solution, use_ReAct=rag_config.use_ReAct)
             results.append(response)
 
         # Save results
@@ -432,15 +563,43 @@ if __name__ == "__main__":
         print("Evaluating results...")
         # Compute evaluation metrics
         if not results:
+            result_file = f"./results/{dataset_name}/{rag_config.solution}/{dataset_name}_{n_samples}.json"
             with open(result_file, "r") as f:
                 results = json.load(f)
 
-        answer_scores: List[float] = []
+        em_scores: List[float] = []
+        f1_scores: List[Tuple[float, float, float]] = []
         for result in results:
             ground_truth_answer = result["ground_truth_answer"]
             predicted_answer = result["answer"]
 
-            p_answer = 1 if ground_truth_answer in predicted_answer else 0
-            answer_scores.append(p_answer)
-        
-        print(f"answer EM score:{np.mean(answer_scores)}")
+            # p_answer = 1 if ground_truth_answer in predicted_answer else 0
+            # answer_scores.append(p_answer)
+
+            from rag_factory.evaluations.exact_match import exact_match, f1_score
+            em_score = exact_match(ground_truth_answer, predicted_answer)
+            f1_score = f1_score(ground_truth_answer, predicted_answer)
+            em_scores.append(em_score)
+            f1_scores.append(f1_score)
+
+        # Save evaluation results
+        save_metrics = {
+            "exact_match": np.mean(em_scores),
+            "f1_score": np.mean([f1_score[0] for f1_score in f1_scores]),
+            "precision": np.mean([f1_score[1] for f1_score in f1_scores]),
+            "recall": np.mean([f1_score[2] for f1_score in f1_scores]),
+        }
+
+        print("Evaluation metrics:")
+        print(f"Exact Match: {save_metrics['exact_match']:.4f}")
+        print(f"F1 Score: {save_metrics['f1_score']:.4f}")
+        print(f"Precision: {save_metrics['precision']:.4f}")            
+        print(f"Recall: {save_metrics['recall']:.4f}")
+
+        save_metrics_file = f"./results/{dataset_name}/{rag_config.solution}/{dataset_name}_{n_samples}_metrics.json"
+        os.makedirs(os.path.dirname(save_metrics_file), exist_ok=True)
+
+        with open(save_metrics_file, "w") as f:
+            json.dump(save_metrics, f, indent=4)
+        print(f"Evaluation metrics saved to {save_metrics_file}")
+        # print(f"answer EM score:{np.mean(answer_scores)}")

@@ -104,7 +104,7 @@ class OpenAICompatible(OpenAI):
         description=LLMMetadata.model_fields["context_window"].description,
     )
     is_chat_model: bool = Field(
-        default=False,
+        default=True,
         description=LLMMetadata.model_fields["is_chat_model"].description,
     )
     is_function_calling_model: bool = Field(

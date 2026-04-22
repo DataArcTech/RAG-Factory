@@ -52,6 +52,7 @@ class RAGConfig:
     stages: List[str] = field(default_factory=lambda: ["create", "inference", "evaluation"])
     max_paths_per_chunk: int = 10
     max_cluster_size: int = 50
+    num_steps: int = 3
 
 @dataclass
 class Query:

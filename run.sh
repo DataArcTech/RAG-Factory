@@ -18,6 +18,9 @@ elif [ "$solution" == "graph_rag" ]; then
 elif [ "$solution" == "mm_rag" ]; then
     echo "Starting MultiModalRAG example..."
     python main.py --config examples/multimodal_rag/config.yaml
+elif [ "$solution" == "ToG3" ]; then
+    echo "Starting ToG3 example..."
+    python main.py --config examples/ToG3/config.yaml
 else
     echo "Unknown solution: $solution"
     exit 1

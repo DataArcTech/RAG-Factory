@@ -47,12 +47,12 @@ pip install -e .
 
 ## Usage
 ```bash
-bash run.sh naive_rag/graph_rag/mm_rag
+bash run.sh ToG3
 ```
 or
 
 ```bash
-python main.py --config examples/graphrag/config.yaml
+python main.py --config examples/ToG3/config.yaml
 ```
 
 

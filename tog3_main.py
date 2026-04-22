@@ -34,6 +34,8 @@ from rag_factory.prompts import KG_TRIPLET_EXTRACT_TMPL
 
 from rag_factory.graph_constructor import GraphRAGConstructor
 from rag_factory.retrivers.graphrag_query_engine import GraphRAGQueryEngine
+from rag_factory.retrivers.refinable_multistep_query_engine import RefinableMultiStepQueryEngine
+from llama_index.core.indices.query.query_transform.base import StepDecomposeQueryTransform
 
 
 def read_args(config_path: Union[str, Path]) -> Tuple[DatasetConfig, LLMConfig, EmbeddingConfig, StorageConfig, RAGConfig]:
@@ -332,8 +334,15 @@ if __name__ == "__main__":
         elif rag_config.solution == "multi_modal_rag":
             # TODO: Implement Multi-modal RAG solution
             raise NotImplementedError("Multi-modal RAG solution is not implemented yet.")
-        elif rag_config.solution == "tog3":
-            query_engine = index.as_query_engine()
+        elif rag_config.solution == "ToG3":
+            # 使用 RefinableMultiStepQueryEngine 实现 MACER 子图精化
+            query_transform = StepDecomposeQueryTransform(llm=llm, verbose=True)
+            query_engine = RefinableMultiStepQueryEngine(
+                query_engine=index.as_query_engine(),
+                query_transform=query_transform,
+                index=index,
+                num_steps=rag_config.num_steps,
+            )
         else:
             raise ValueError(f"Unsupported RAG solution: {rag_config.solution}")
 
